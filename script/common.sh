@@ -22,7 +22,7 @@ ZIP_YQ=$(echo ${ZIP_BASE_DIR}/yq*)
 ZIP_SUBCONVERTER=$(echo ${ZIP_BASE_DIR}/subconverter*)
 ZIP_UI="${ZIP_BASE_DIR}/yacd.tar.xz"
 
-CLASH_BASE_DIR='/opt/clash'
+CLASH_BASE_DIR='/root/clash'
 CLASH_SCRIPT_DIR="${CLASH_BASE_DIR}/$(basename $SCRIPT_BASE_DIR)"
 CLASH_CONFIG_URL="${CLASH_BASE_DIR}/url"
 CLASH_CONFIG_RAW="${CLASH_BASE_DIR}/$(basename $RESOURCES_CONFIG)"
@@ -174,7 +174,13 @@ _get_color_msg() {
 }
 
 _get_random_val() {
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6
+    # 优先使用 openssl 生成 64 位密钥（32 字节 hex -> 64 个十六进制字符）
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+    else
+        # 回退方案：使用 /dev/urandom 生成 64 位字母数字随机串
+        cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 64
+    fi
 }
 
 function _okcat() {
