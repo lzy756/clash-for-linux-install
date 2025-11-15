@@ -62,7 +62,7 @@ _set_var() {
 
     # 定时任务路径
     local os_info=$(cat /etc/os-release)
-    echo "$os_info" | grep -iqsE "rhel|centos" && CLASH_CRON_TAB="/var/spool/cron/$user"
+    echo "$os_info" | grep -iqsE "rhel|centos|openEuler|Rocky|AlmaLinux" && CLASH_CRON_TAB="/var/spool/cron/$user"
     echo "$os_info" | grep -iqsE "debian|ubuntu" && CLASH_CRON_TAB="/var/spool/cron/crontabs/$user"
 }
 _set_var
@@ -147,13 +147,15 @@ function _get_proxy_port() {
 
 function _get_ui_port() {
     local ext_addr=$(sudo "$BIN_YQ" '.external-controller // ""' $CLASH_CONFIG_RUNTIME)
-    EXT_IP=${ext_addr%%:*}
+    local ext_ip=${ext_addr%%:*}
+    EXT_IP=$ext_ip
     EXT_PORT=${ext_addr##*:}
-
+    # ip route get 1.1.1.1 | grep -oP 'src \K\S+'
+    [ "$ext_ip" = '0.0.0.0' ] && EXT_IP=$(hostname -I | awk '{print $1}')
     _is_already_in_use "$EXT_PORT" "$BIN_KERNEL_NAME" && {
         local newPort=$(_get_random_port)
         local msg="端口占用：${EXT_PORT} 🎲 随机分配：$newPort"
-        sudo "$BIN_YQ" -i ".external-controller = \"$EXT_IP:$newPort\"" $CLASH_CONFIG_RUNTIME
+        sudo "$BIN_YQ" -i ".external-controller = \"$ext_ip:$newPort\"" $CLASH_CONFIG_RUNTIME
         EXT_PORT=$newPort
         _failcat '🎯' "$msg"
     }
@@ -233,7 +235,6 @@ function _is_root() {
 
 function _valid_env() {
     _is_root || _error_quit "需要 root 或 sudo 权限执行"
-    [ -n "$ZSH_VERSION" ] && [ -n "$BASH_VERSION" ] && _error_quit "仅支持：bash、zsh"
     [ "$(ps -p 1 -o comm=)" != "systemd" ] && _error_quit "系统不具备 systemd"
 }
 
@@ -284,7 +285,9 @@ _download_clash() {
         --show-error \
         --fail \
         --insecure \
-        --connect-timeout 15 \
+        --location \
+        --connect-timeout 5 \
+        --max-time 15 \
         --retry 1 \
         --output "$ZIP_CLASH" \
         "$url"
@@ -300,7 +303,8 @@ _download_raw_config() {
         --silent \
         --show-error \
         --insecure \
-        --connect-timeout 4 \
+        --location \
+        --max-time 5 \
         --retry 1 \
         --user-agent "$agent" \
         --output "$dest" \
@@ -324,6 +328,7 @@ _download_convert_config() {
         curl \
             --get \
             --silent \
+            --location \
             --output /dev/null \
             --data-urlencode "target=$target" \
             --data-urlencode "url=$url" \

@@ -6,8 +6,7 @@ _set_system_proxy() {
     [ -n "$auth" ] && auth=$auth@
 
     local bind_addr=$(sudo "$BIN_YQ" '.bind-address // ""' "$CLASH_CONFIG_RUNTIME")
-    [[ -z "$bind_addr" || "$bind_addr" == "*" ]] && bind_addr='127.0.0.1'
-
+    case $bind_addr in "" | "*" | "0.0.0.0") bind_addr=127.0.0.1 ;; esac
     local http_proxy_addr="http://${auth}${bind_addr}:${MIXED_PORT}"
     local socks_proxy_addr="socks5h://${auth}${bind_addr}:${MIXED_PORT}"
     local no_proxy_addr="localhost,127.0.0.1,::1"
@@ -22,8 +21,6 @@ _set_system_proxy() {
 
     export no_proxy=$no_proxy_addr
     export NO_PROXY=$no_proxy
-
-    sudo "$BIN_YQ" -i '.system-proxy.enable = true' "$CLASH_CONFIG_MIXIN"
 }
 
 _unset_system_proxy() {
@@ -35,8 +32,6 @@ _unset_system_proxy() {
     unset ALL_PROXY
     unset no_proxy
     unset NO_PROXY
-
-    sudo "$BIN_YQ" -i '.system-proxy.enable = false' "$CLASH_CONFIG_MIXIN"
 }
 
 function clashon() {
@@ -47,7 +42,7 @@ function clashon() {
             return 1
         }
     }
-    _set_system_proxy
+    clashproxy status >/dev/null && _set_system_proxy
     _okcat '已开启代理环境'
 }
 
@@ -76,10 +71,12 @@ function clashproxy() {
             _failcat '代理程序未运行，请执行 clashon 开启代理环境'
             return 1
         }
+        sudo "$BIN_YQ" -i '.system-proxy.enable = true' "$CLASH_CONFIG_MIXIN"
         _set_system_proxy
         _okcat '已开启系统代理'
         ;;
     off)
+        sudo "$BIN_YQ" -i '.system-proxy.enable = false' "$CLASH_CONFIG_MIXIN"
         _unset_system_proxy
         _okcat '已关闭系统代理'
         ;;
@@ -113,12 +110,10 @@ function clashui() {
     # 公网ip
     # ifconfig.me
     local query_url='api64.ipify.org'
-    local public_ip=$(curl -s --noproxy "*" --connect-timeout 2 $query_url)
+    local public_ip=$(curl -s --noproxy "*" --location --max-time 2 $query_url)
     local public_address="http://${public_ip:-公网}:${EXT_PORT}/ui"
-    # 内网ip
-    # ip route get 1.1.1.1 | grep -oP 'src \K\S+'
+
     local local_ip=$EXT_IP
-    [ "$EXT_IP" = '0.0.0.0' ] && local_ip=$(hostname -I | awk '{print $1}')
     local local_address="http://${local_ip}:${EXT_PORT}/ui"
     printf "\n"
     printf "╔═══════════════════════════════════════════════╗\n"
@@ -267,6 +262,58 @@ function clashmixin() {
     esac
 }
 
+function clashupgrade() {
+    case "$1" in
+    -h | --help)
+        cat <<EOF
+
+- 升级当前版本
+  clashupgrade
+
+- 升级到稳定版
+  clashupgrade release
+
+- 升级到测试版
+  clashupgrade alpha
+
+EOF
+        return 0
+        ;;
+    release)
+        channel="release"
+        ;;
+    alpha)
+        channel="alpha"
+        ;;
+    *)
+        channel=""
+        ;;
+    esac
+
+    _okcat "请求内核升级..."
+    _get_ui_port
+    local secret=$(sudo "$BIN_YQ" '.secret // ""' "$CLASH_CONFIG_RUNTIME")
+    local res=$(
+        curl -X POST \
+            --silent \
+            --noproxy "*" \
+            --location \
+            -H "Authorization: Bearer $secret" \
+            "http://${EXT_IP}:${EXT_PORT}/upgrade?channel=$channel"
+    )
+
+    grep -qs '"status":"ok"' <<<"$res" && {
+        _okcat "内核升级成功"
+        return 0
+    }
+    grep 'already using latest version' <<<"$res" && {
+        _okcat "已是最新版本"
+        return 0
+    }
+    _failcat "升级请求失败，请检查网络或稍后重试"
+
+}
+
 function clashctl() {
     case "$1" in
     on)
@@ -302,6 +349,10 @@ function clashctl() {
         shift
         clashupdate "$@"
         ;;
+    upgrade)
+        shift
+        clashupgrade "$@"
+        ;;
     *)
         shift
         clashhelp "$@"
@@ -325,6 +376,7 @@ Commands:
     mixin    [-e|-r]        Mixin 配置
     secret   [SECRET]       Web 密钥
     update   [auto|log]     更新订阅
+    upgrade                 升级内核
 
 EOF
 }
